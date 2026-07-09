@@ -1,3 +1,7 @@
+import os
+import imageio_ffmpeg
+os.environ["PATH"] += os.pathsep + os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -5,7 +9,6 @@ from pydantic import BaseModel
 from typing import Optional
 import yt_dlp
 import uuid
-import os
 
 app = FastAPI()
 
