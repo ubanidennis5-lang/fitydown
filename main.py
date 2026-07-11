@@ -28,18 +28,25 @@ class DownloadRequest(BaseModel):
     end_time: Optional[str] = None
 
 def get_base_ydl_opts():
+    # FORCE absolute paths to guarantee the cookies.txt file is found
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    cookie_path = os.path.join(BASE_DIR, 'cookies.txt')
+    
     opts = {
         'quiet': True,
         'no_warnings': True,
-        'noplaylist': True, # Forces Instagram/TikTok to only load the single video, drastically speeding up load times
-        'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(), # Fixes the mute video issue by pointing directly to the hidden ffmpeg executable!
+        'noplaylist': True,
+        'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(), # Guarantees audio/video merging works
         'extractor_args': {
-            'youtube': ['player_client=android', 'client=android'] # Bypasses YouTube bot checks by pretending to be an Android phone
+            'youtube': ['player_client=android', 'client=android'] # Bypasses YouTube bot checks
         }
     }
-    # Uses cookies if you uploaded the cookies.txt file
-    if os.path.exists('cookies.txt'):
-        opts['cookiefile'] = 'cookies.txt'
+    
+    if os.path.exists(cookie_path):
+        opts['cookiefile'] = cookie_path
+    else:
+        print(f"WARNING: Could not find cookies at {cookie_path}")
+        
     return opts
 
 @app.post("/info")
@@ -47,11 +54,11 @@ async def get_video_info(req: InfoRequest):
     ydl_opts = get_base_ydl_opts()
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # We skip downloading, so this just gets the title/thumbnail instantly
             info = ydl.extract_info(req.url, download=False)
             
             formats = []
             for f in info.get('formats', []):
-                # Filter out pure junk streams
                 if f.get('vcodec') != 'none' or f.get('acodec') != 'none':
                     formats.append({
                         'format_id': f.get('format_id'),
@@ -103,7 +110,6 @@ async def download_video(req: DownloadRequest, background_tasks: BackgroundTasks
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([req.url])
             
-        # Ensure we find the exact file since yt-dlp might change extensions
         actual_file = filename
         if not os.path.exists(actual_file):
             for ext in ['.mp4', '.mkv', '.webm', '.m4a', '.mp3']:
