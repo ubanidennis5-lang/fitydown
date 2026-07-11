@@ -1,8 +1,5 @@
 import os
 import imageio_ffmpeg
-# Bypass Render's root restriction for ffmpeg
-os.environ["PATH"] += os.pathsep + os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
-
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,8 +31,13 @@ def get_base_ydl_opts():
     opts = {
         'quiet': True,
         'no_warnings': True,
+        'noplaylist': True, # Forces Instagram/TikTok to only load the single video, drastically speeding up load times
+        'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(), # Fixes the mute video issue by pointing directly to the hidden ffmpeg executable!
+        'extractor_args': {
+            'youtube': ['player_client=android', 'client=android'] # Bypasses YouTube bot checks by pretending to be an Android phone
+        }
     }
-    # Automatically use cookies to bypass YouTube bot checks!
+    # Uses cookies if you uploaded the cookies.txt file
     if os.path.exists('cookies.txt'):
         opts['cookiefile'] = 'cookies.txt'
     return opts
@@ -45,7 +47,6 @@ async def get_video_info(req: InfoRequest):
     ydl_opts = get_base_ydl_opts()
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # download=False means we ONLY fetch the metadata, incredibly fast!
             info = ydl.extract_info(req.url, download=False)
             
             formats = []
