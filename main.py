@@ -1,5 +1,6 @@
 import os
 import imageio_ffmpeg
+# Bypass Render's root restriction for ffmpeg
 os.environ["PATH"] += os.pathsep + os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -12,7 +13,6 @@ import uuid
 
 app = FastAPI()
 
-# Allow our Next.js frontend to talk to this backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -21,10 +21,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class InfoRequest(BaseModel):
+    url: str
+
 class DownloadRequest(BaseModel):
     url: str
+    format_id: Optional[str] = 'best'
     start_time: Optional[str] = None
     end_time: Optional[str] = None
+
+def get_base_ydl_opts():
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+    }
+    # Automatically use cookies to bypass YouTube bot checks!
+    if os.path.exists('cookies.txt'):
+        opts['cookiefile'] = 'cookies.txt'
+    return opts
+
+@app.post("/info")
+async def get_video_info(req: InfoRequest):
+    ydl_opts = get_base_ydl_opts()
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # download=False means we ONLY fetch the metadata, incredibly fast!
+            info = ydl.extract_info(req.url, download=False)
+            
+            formats = []
+            for f in info.get('formats', []):
+                # Filter out pure junk streams
+                if f.get('vcodec') != 'none' or f.get('acodec') != 'none':
+                    formats.append({
+                        'format_id': f.get('format_id'),
+                        'ext': f.get('ext'),
+                        'resolution': f.get('resolution') or 'Audio/Unknown',
+                        'note': f.get('format_note', ''),
+                        'filesize': f.get('filesize', 0)
+                    })
+                    
+            return {
+                "title": info.get("title", "Unknown Video"),
+                "thumbnail": info.get("thumbnail", ""),
+                "duration": info.get("duration", 0),
+                "formats": formats
+            }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 def parse_time_to_seconds(time_str: str) -> int:
     if not time_str: return 0
@@ -43,17 +86,13 @@ async def download_video(req: DownloadRequest, background_tasks: BackgroundTasks
     start_sec = parse_time_to_seconds(req.start_time) if req.start_time else None
     end_sec = parse_time_to_seconds(req.end_time) if req.end_time else None
 
-    # Generate a unique filename for this user's download
     filename = f"/tmp/{uuid.uuid4()}.mp4"
 
-    ydl_opts = {
-        'format': 'best',
-        'outtmpl': filename,
-        'quiet': True,
-        'no_warnings': True,
-    }
+    ydl_opts = get_base_ydl_opts()
+    ydl_opts['format'] = req.format_id if req.format_id else 'best'
+    ydl_opts['outtmpl'] = filename
+    ydl_opts['merge_output_format'] = 'mp4'
 
-    # If the user provided timestamps, tell yt-dlp to slice the video!
     if start_sec is not None and end_sec is not None:
         def download_range_func(info_dict, ydl):
             return [{'start_time': start_sec, 'end_time': end_sec}]
@@ -63,13 +102,20 @@ async def download_video(req: DownloadRequest, background_tasks: BackgroundTasks
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([req.url])
             
-        if not os.path.exists(filename):
+        # Ensure we find the exact file since yt-dlp might change extensions
+        actual_file = filename
+        if not os.path.exists(actual_file):
+            for ext in ['.mp4', '.mkv', '.webm', '.m4a', '.mp3']:
+                test_file = f"/tmp/{filename.split('/')[-1].split('.')[0]}{ext}"
+                if os.path.exists(test_file):
+                    actual_file = test_file
+                    break
+                    
+        if not os.path.exists(actual_file):
             raise HTTPException(status_code=500, detail="Failed to process video.")
             
-        # Tell FastAPI to delete the file from the server AFTER sending it to the user
-        background_tasks.add_task(cleanup_file, filename)
-        
-        return FileResponse(path=filename, media_type='video/mp4', filename="video_clip.mp4")
+        background_tasks.add_task(cleanup_file, actual_file)
+        return FileResponse(path=actual_file, media_type='application/octet-stream', filename=f"fitydown_video{os.path.splitext(actual_file)[1]}")
 
     except Exception as e:
         cleanup_file(filename)
