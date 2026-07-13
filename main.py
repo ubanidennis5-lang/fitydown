@@ -36,6 +36,8 @@ async def get_info(req: VideoRequest):
     ydl_opts = {
         'cookiefile': os.path.abspath('cookies.txt'),
         'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        # ADD THIS LINE HERE SO FETCHING NEVER CRASHES:
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'quiet': True,
         'no_warnings': True,
     }
@@ -51,33 +53,5 @@ async def get_info(req: VideoRequest):
                 "extractor": info.get('extractor'),
                 "formats": []
             }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.post("/download")
-async def download_video(req: VideoRequest):
-    out_filename = f"dl_{uuid.uuid4().hex}"
-    
-    ydl_opts = {
-        'cookiefile': os.path.abspath('cookies.txt'),
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        # Extremely robust fallback: tries to get highest MP4, otherwise just grabs the absolute best single file available
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': f'{out_filename}.%(ext)s',
-        'quiet': True,
-    }
-    
-    if req.start_time and req.end_time:
-        ydl_opts['download_ranges'] = yt_dlp.utils.download_range_func(None, [(yt_dlp.utils.parse_duration(req.start_time), yt_dlp.utils.parse_duration(req.end_time))])
-        ydl_opts['force_keyframes_at_cuts'] = True
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(req.url, download=True)
-            filename = ydl.prepare_filename(info)
-            if not os.path.exists(filename):
-                filename = f"{out_filename}.mp4"
-            
-            return FileResponse(filename, media_type='application/octet-stream', filename=os.path.basename(filename))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
