@@ -153,11 +153,13 @@ async def download_video(req: VideoRequest):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(req.url, download=True)
-            filename = ydl.prepare_filename(info)
-            if not os.path.exists(filename):
-                filename = f"{out_filename}.mp4"
+            import glob
+            downloaded_files = glob.glob(f"{out_filename}.*")
+            if not downloaded_files:
+                raise HTTPException(status_code=404, detail="Video file not found after downloading.")
+            actual_filename = downloaded_files[0]
             
-            return FileResponse(filename, media_type='application/octet-stream', filename=os.path.basename(filename))
+            return FileResponse(actual_filename, media_type='application/octet-stream', filename=os.path.basename(actual_filename))
     except Exception as e:
         error_msg = str(e)
         if "There is no video in this post" in error_msg and "instagram.com" in req.url.lower():
