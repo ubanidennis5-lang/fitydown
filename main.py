@@ -8,9 +8,7 @@ import yt_dlp
 import re
 import urllib.request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.cors import CORSMiddleware
-
-import time
+import glob
 
 app = FastAPI()
 
@@ -78,12 +76,21 @@ async def explore_live(category: str = "music"):
 
 @app.post("/info")
 async def get_info(req: VideoRequest):
+    try:
+        import imageio_ffmpeg
+        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        ffmpeg_path = None
+        
     ydl_opts = {
         'cookiefile': os.path.abspath('cookies.txt'),
         'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         'quiet': True,
         'no_warnings': True,
     }
+    if ffmpeg_path:
+        ydl_opts['ffmpeg_location'] = ffmpeg_path
+        
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(req.url, download=False)
@@ -108,7 +115,7 @@ async def get_info(req: VideoRequest):
             }
     except Exception as e:
         error_msg = str(e)
-        if "There is no video in this post" in error_msg and "instagram.com" in req.url.lower():
+        if "instagram.com" in req.url.lower():
             try:
                 import instaloader
                 L = instaloader.Instaloader(quiet=True)
@@ -129,15 +136,24 @@ async def get_info(req: VideoRequest):
                             "ext": "jpg"
                         }]
                     }
-            except Exception as inst_e:
-                raise HTTPException(status_code=400, detail=f"Failed to fetch photo: {str(inst_e)}")
+            except Exception:
+                pass # If fallback fails, fall through to clean error
         
-        raise HTTPException(status_code=400, detail=error_msg)
+        # Clean up ugly yt-dlp errors
+        if "No video formats" in error_msg or "There is no video" in error_msg:
+            raise HTTPException(status_code=400, detail="No downloadable media found in this post. It might be private or unsupported.")
+        raise HTTPException(status_code=400, detail="Failed to retrieve video info. Please verify the URL and try again.")
 
 @app.post("/download")
 async def download_video(req: VideoRequest):
     out_filename = f"dl_{uuid.uuid4().hex}"
     
+    try:
+        import imageio_ffmpeg
+        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        ffmpeg_path = None
+        
     ydl_opts = {
         'cookiefile': os.path.abspath('cookies.txt'),
         'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
@@ -145,10 +161,11 @@ async def download_video(req: VideoRequest):
         'outtmpl': f'{out_filename}.%(ext)s',
         'quiet': True,
     }
+    if ffmpeg_path:
+        ydl_opts['ffmpeg_location'] = ffmpeg_path
     
     if req.start_time and req.end_time:
         ydl_opts['download_ranges'] = yt_dlp.utils.download_range_func(None, [(yt_dlp.utils.parse_duration(req.start_time), yt_dlp.utils.parse_duration(req.end_time))])
-        ydl_opts['force_keyframes_at_cuts'] = True
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -162,7 +179,7 @@ async def download_video(req: VideoRequest):
             return FileResponse(actual_filename, media_type='application/octet-stream', filename=os.path.basename(actual_filename))
     except Exception as e:
         error_msg = str(e)
-        if "There is no video in this post" in error_msg and "instagram.com" in req.url.lower():
+        if "instagram.com" in req.url.lower():
             try:
                 import instaloader
                 L = instaloader.Instaloader(quiet=True)
@@ -174,10 +191,12 @@ async def download_video(req: VideoRequest):
                     # Download the image
                     urllib.request.urlretrieve(img_url, f"{out_filename}.jpg")
                     return FileResponse(f"{out_filename}.jpg", media_type='image/jpeg', filename=f"{shortcode}.jpg")
-            except Exception as inst_e:
-                raise HTTPException(status_code=400, detail=f"Failed to fetch photo: {str(inst_e)}")
+            except Exception:
+                pass
                 
-        raise HTTPException(status_code=400, detail=error_msg)
+        if "No video formats" in error_msg or "There is no video" in error_msg:
+            raise HTTPException(status_code=400, detail="No downloadable media found in this post. It might be private or unsupported.")
+        raise HTTPException(status_code=400, detail="Failed to process video download.")
 
 if __name__ == "__main__":
     import uvicorn

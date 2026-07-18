@@ -2,5 +2,6 @@ fastapi
 uvicorn
 yt-dlp
 pydantic
-instaloader  
+instaloader
+imageio-ffmpeg  
  
