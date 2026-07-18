@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-yt-dlp
-pydantic
-instaloader
-imageio-ffmpeg  
- 
