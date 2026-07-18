@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: metube
-    env: docker
-    plan: free
-    dockerContext: .
-    dockerfilePath: Dockerfile
